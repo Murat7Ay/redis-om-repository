@@ -2,6 +2,7 @@
 
 namespace CrudApp.Entity;
 
+[ApiPolicy("root")]
 [Document(StorageType = StorageType.Json,Prefixes = new []{"Rose"})]
 public class RoseEntity : IEntity<RoseEntity>, IVersionAbleEntity
 {

@@ -4,8 +4,28 @@ namespace CrudApp.Settings;
 
 public class ApiSettings
 {
-    private static readonly string SecretKey = "6ceccd7405ef4b00b2630009be568cfa";
-    private static readonly string PasswordKey = "6ceccd7405ef4b00b2630009be568cfa";
-    internal static byte[] GenerateSecretByte() => Encoding.ASCII.GetBytes(SecretKey);
-    internal static byte[] GeneratePasswordByte() =>  Encoding.ASCII.GetBytes(PasswordKey);
+    public const string SectionName = "ApiSettings";
+
+    public string SecretKey { get; set; } = string.Empty;
+    public string PasswordKey { get; set; } = string.Empty;
+
+    public byte[] GetSecretBytes()
+    {
+        if (string.IsNullOrWhiteSpace(SecretKey))
+        {
+            throw new InvalidOperationException("ApiSettings:SecretKey is missing.");
+        }
+
+        return Encoding.UTF8.GetBytes(SecretKey);
+    }
+
+    public byte[] GetPasswordBytes()
+    {
+        if (string.IsNullOrWhiteSpace(PasswordKey))
+        {
+            throw new InvalidOperationException("ApiSettings:PasswordKey is missing.");
+        }
+
+        return Encoding.UTF8.GetBytes(PasswordKey);
+    }
 }

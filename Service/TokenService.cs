@@ -4,17 +4,24 @@ using System.Security.Cryptography;
 using System.Text;
 using CrudApp.Entity;
 using CrudApp.Settings;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 namespace CrudApp.Service;
 
 internal class TokenService
 {
+    private readonly ApiSettings _apiSettings;
+
+    public TokenService(IOptions<ApiSettings> apiOptions)
+    {
+        _apiSettings = apiOptions.Value;
+    }
+
     internal string GenerateToken(UserEntity user)
     {
         var tokenHandler = new JwtSecurityTokenHandler();
-
-        var key = ApiSettings.GenerateSecretByte();
+        var key = _apiSettings.GetSecretBytes();
 
         var tokenDescriptor = new SecurityTokenDescriptor
         {
@@ -40,7 +47,7 @@ internal class TokenService
         Byte[] textBytes = encoding.GetBytes(password);
         Byte[] hashBytes;
 
-        using (HMACSHA256 hash = new HMACSHA256(ApiSettings.GeneratePasswordByte()))
+        using (HMACSHA256 hash = new HMACSHA256(_apiSettings.GetPasswordBytes()))
             hashBytes = hash.ComputeHash(textBytes);
 
         return BitConverter.ToString(hashBytes).Replace("-", "").ToLower();

@@ -10,8 +10,15 @@ using Redis.OM;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
-string redisPort = builder.Configuration["Redis:Port"]!;
-var secretKey = ApiSettings.GenerateSecretByte();
+string redisConnectionString = builder.Configuration["Redis:ConnectionString"]
+    ?? builder.Configuration["Redis:Port"]
+    ?? "localhost:6379";
+
+ApiSettings apiSettings = builder.Configuration.GetSection(ApiSettings.SectionName).Get<ApiSettings>()
+    ?? new ApiSettings();
+var secretKey = apiSettings.GetSecretBytes();
+
+builder.Services.Configure<ApiSettings>(builder.Configuration.GetSection(ApiSettings.SectionName));
 
 builder.Services.AddAuthentication(config =>
 {
@@ -36,7 +43,6 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("root", policy => policy.RequireRole("root"));
 });
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "Internal Generator Apis", Version = "v1" });
@@ -62,11 +68,12 @@ builder.Services.AddSwaggerGen(c =>
     securityRequirement.Add(secondSecurityDefinition, new string[] { });
     c.AddSecurityRequirement(securityRequirement);
 });
-builder.Services.AddSingleton(new RedisConnectionProvider(new ConfigurationOptions
-    { EndPoints = { redisPort } }));
+
+var redisOptions = ConfigurationOptions.Parse(redisConnectionString, true);
+builder.Services.AddSingleton(new RedisConnectionProvider(redisOptions));
 builder.Services.AddSingleton<IDatabase>(cfg =>
 {
-    IConnectionMultiplexer multiplexer = ConnectionMultiplexer.Connect(redisPort);
+    IConnectionMultiplexer multiplexer = ConnectionMultiplexer.Connect(redisOptions);
     return multiplexer.GetDatabase();
 });
 builder.Services.AddHostedService<CreateIndexHostedService>();

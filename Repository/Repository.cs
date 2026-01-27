@@ -1,7 +1,9 @@
-﻿using System.Security.Claims;
+﻿using System.Linq.Expressions;
+using System.Security.Claims;
 using CrudApp.Entity;
 using CrudApp.Enums;
 using CrudApp.Models;
+using CrudApp.Specification;
 using Redis.OM;
 using Redis.OM.Searching;
 using StackExchange.Redis;
@@ -21,15 +23,31 @@ public class Repository<T> : IRepository<T> where T : class, IEntity<T>, new()
         _database = database;
         _redisCollection = provider.RedisCollection<T>();
         Claim? hashClaim = httpContextAccessor.HttpContext?.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Hash);
-        _traceId = string.IsNullOrEmpty(hashClaim?.Value) ? Guid.Empty : Guid.Parse(hashClaim.Value);
+        _traceId = Guid.TryParse(hashClaim?.Value, out Guid parsedTraceId) ? parsedTraceId : Guid.Empty;
         Claim? userClaim = httpContextAccessor.HttpContext?.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Name);
-        _userCode = userClaim?.Value!;
+        _userCode = string.IsNullOrWhiteSpace(userClaim?.Value) ? "system" : userClaim.Value;
     }
 
     private string EntityName => typeof(T).Name;
-    private RedisKey EntityCounterKey => $"{EntityName}:Counter";
+    private static (int Offset, int Limit) NormalizePagination(int offset, int limit)
+    {
+        if (limit <= 0 || limit > MaxEntityCount)
+            limit = MaxEntityCount;
+        if (offset < 0)
+            offset = 0;
+        return (offset, limit);
+    }
 
-    public async Task<Result<T>> Save(T entity)
+    private long CountAll() => _redisCollection.Count();
+    private long Count(Expression<Func<T, bool>> predicate) => _redisCollection.Where(predicate).Count();
+    private long Count(ISpecification<T> specification) => _redisCollection.Where(specification.Criteria).Count();
+
+    private IRedisCollection<T> ApplySpecification(ISpecification<T> specification)
+    {
+        return _redisCollection.Where(specification.Criteria);
+    }
+
+    public async Task<Result<T>> AddAsync(T entity, CancellationToken cancellationToken = default)
     {
         if (!string.IsNullOrEmpty(entity.Id))
         {
@@ -46,7 +64,6 @@ public class Repository<T> : IRepository<T> where T : class, IEntity<T>, new()
         }
 
         string id = await _redisCollection.InsertAsync(entity);
-        await IncrementEntityCount();
         entity.Id = id;
         return new Result<T>()
             .SetReturnType(ReturnType.Success)
@@ -54,7 +71,7 @@ public class Repository<T> : IRepository<T> where T : class, IEntity<T>, new()
             .SetTraceId(_traceId);
     }
 
-    public async Task<Result<T?>> FindById(string id)
+    public async Task<Result<T?>> FindByIdAsync(string id, CancellationToken cancellationToken = default)
     {
         T? entity = await _redisCollection.FindByIdAsync(id);
         Result<T?> result = new Result<T?>()
@@ -64,26 +81,36 @@ public class Repository<T> : IRepository<T> where T : class, IEntity<T>, new()
         return result;
     }
 
-    public Result<IList<T>> Get(Func<T, bool> predicate)
+    public async Task<Result<T?>> FindOneAsync(Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
     {
-        IList<T> entities = _redisCollection.Where(predicate).ToList();
-        int countValue = entities.Count;
-        Result<IList<T>> result = new Result<IList<T>>()
-            .SetData(entities)
+        IList<T> entities = await _redisCollection.Where(predicate).Take(1).ToListAsync();
+        T? entity = entities.FirstOrDefault();
+        Result<T?> result = new Result<T?>()
+            .SetData(entity)
             .SetTraceId(_traceId)
-            .SetPagination(new Pagination(0, 0, countValue))
-            .SetReturnType(countValue > 0 ? ReturnType.Success : ReturnType.CollectionIsEmpty);
+            .SetReturnType(entity == null ? ReturnType.EntityIsNull : ReturnType.Success);
         return result;
     }
 
-    public async Task<Result<IList<T>>> Get()
+    public async Task<Result<T?>> FindOneAsync(ISpecification<T> specification, CancellationToken cancellationToken = default)
     {
-        long countValue = await GetEntityCount();
+        IList<T> entities = await ApplySpecification(specification).Take(1).ToListAsync();
+        T? entity = entities.FirstOrDefault();
+        Result<T?> result = new Result<T?>()
+            .SetData(entity)
+            .SetTraceId(_traceId)
+            .SetReturnType(entity == null ? ReturnType.EntityIsNull : ReturnType.Success);
+        return result;
+    }
+
+    public async Task<Result<IList<T>>> ListAsync(CancellationToken cancellationToken = default)
+    {
+        long countValue = CountAll();
         if (countValue > MaxEntityCount)
         {
             return new Result<IList<T>>()
                 .SetTraceId(_traceId)
-                .SetPagination(new Pagination(0, 0, countValue))
+                .SetPagination(new Pagination(MaxEntityCount, 0, countValue))
                 .SetDescription("Too many record. Use pagination method.")
                 .SetReturnType(ReturnType.TooManyRecords);
         }
@@ -92,11 +119,54 @@ public class Repository<T> : IRepository<T> where T : class, IEntity<T>, new()
         Result<IList<T>> result = new Result<IList<T>>()
             .SetData(entities)
             .SetTraceId(_traceId)
+            .SetPagination(new Pagination(entities.Count, 0, countValue))
             .SetReturnType(entities.Count > 0 ? ReturnType.Success : ReturnType.CollectionIsEmpty);
         return result;
     }
 
-    public async Task<Result<T>> Update(T entity)
+    public async Task<Result<IList<T>>> ListAsync(Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        long countValue = Count(predicate);
+        if (countValue > MaxEntityCount)
+        {
+            return new Result<IList<T>>()
+                .SetTraceId(_traceId)
+                .SetPagination(new Pagination(MaxEntityCount, 0, countValue))
+                .SetDescription("Too many record. Use pagination method.")
+                .SetReturnType(ReturnType.TooManyRecords);
+        }
+
+        IList<T> entities = await _redisCollection.Where(predicate).ToListAsync();
+        Result<IList<T>> result = new Result<IList<T>>()
+            .SetData(entities)
+            .SetTraceId(_traceId)
+            .SetPagination(new Pagination(entities.Count, 0, countValue))
+            .SetReturnType(entities.Count > 0 ? ReturnType.Success : ReturnType.CollectionIsEmpty);
+        return result;
+    }
+
+    public async Task<Result<IList<T>>> ListAsync(ISpecification<T> specification, CancellationToken cancellationToken = default)
+    {
+        long countValue = Count(specification);
+        if (countValue > MaxEntityCount)
+        {
+            return new Result<IList<T>>()
+                .SetTraceId(_traceId)
+                .SetPagination(new Pagination(MaxEntityCount, 0, countValue))
+                .SetDescription("Too many record. Use pagination method.")
+                .SetReturnType(ReturnType.TooManyRecords);
+        }
+
+        IList<T> entities = await ApplySpecification(specification).ToListAsync();
+        Result<IList<T>> result = new Result<IList<T>>()
+            .SetData(entities)
+            .SetTraceId(_traceId)
+            .SetPagination(new Pagination(entities.Count, 0, countValue))
+            .SetReturnType(entities.Count > 0 ? ReturnType.Success : ReturnType.CollectionIsEmpty);
+        return result;
+    }
+
+    public async Task<Result<T>> UpdateAsync(T entity, CancellationToken cancellationToken = default)
     {
         T? existingEntity = await _redisCollection.FindByIdAsync(entity.Id);
         if (existingEntity is null)
@@ -131,7 +201,7 @@ public class Repository<T> : IRepository<T> where T : class, IEntity<T>, new()
             .SetReturnType(ReturnType.Success);
     }
 
-    public async Task<Result<T?>> Delete(string id)
+    public async Task<Result<T?>> DeleteAsync(string id, CancellationToken cancellationToken = default)
     {
         T? entity = await _redisCollection.FindByIdAsync(id);
         if (entity is null)
@@ -144,49 +214,57 @@ public class Repository<T> : IRepository<T> where T : class, IEntity<T>, new()
         }
 
         await _redisCollection.DeleteAsync(entity);
-        await DecrementEntityCount();
         return new Result<T?>()
             .SetData(entity)
             .SetTraceId(_traceId)
             .SetReturnType(ReturnType.Success);
     }
 
-    public async Task<Result<IList<T>>> Get(int offset, int limit)
+    public async Task<Result<IList<T>>> PageAsync(int offset, int limit, CancellationToken cancellationToken = default)
     {
-        if (limit > MaxEntityCount)
-            limit = MaxEntityCount;
-        if (offset < 0)
-            offset = 0;
+        (int normalizedOffset, int normalizedLimit) = NormalizePagination(offset, limit);
 
-        var entities = await _redisCollection.Skip(offset * limit).Take(limit).ToListAsync();
-        long countValue = await GetEntityCount();
+        var entities = await _redisCollection.Skip(normalizedOffset).Take(normalizedLimit).ToListAsync();
+        long countValue = CountAll();
         Result<IList<T>> result = new Result<IList<T>>()
             .SetData(entities)
             .SetTraceId(_traceId)
-            .SetPagination(new Pagination(0, 0, countValue))
+            .SetPagination(new Pagination(normalizedLimit, normalizedOffset, countValue))
             .SetReturnType(ReturnType.Success);
         return result;
     }
 
-    public Result<IList<T>> Get(Func<T, bool> predicate, int offset, int limit)
+    public async Task<Result<IList<T>>> PageAsync(Expression<Func<T, bool>> predicate, int offset, int limit, CancellationToken cancellationToken = default)
     {
-        if (limit > MaxEntityCount)
-            limit = MaxEntityCount;
-        if (offset < 0)
-            offset = 0;
+        (int normalizedOffset, int normalizedLimit) = NormalizePagination(offset, limit);
 
-        IList<T> filteredEntities = _redisCollection.Where(predicate).ToList();
-        long countValue = filteredEntities.Count;
-        IList<T> entities = filteredEntities.Skip(offset * limit).Take(limit).ToList();
+        var query = _redisCollection.Where(predicate);
+        long countValue = query.Count();
+        IList<T> entities = await query.Skip(normalizedOffset).Take(normalizedLimit).ToListAsync();
         Result<IList<T>> result = new Result<IList<T>>()
             .SetData(entities)
-            .SetPagination(new Pagination(0, 0, countValue))
+            .SetPagination(new Pagination(normalizedLimit, normalizedOffset, countValue))
             .SetTraceId(_traceId)
             .SetReturnType(entities.Count > 0 ? ReturnType.Success : ReturnType.CollectionIsEmpty);
         return result;
     }
 
-    public async Task<Result<History>> GetHistory(string id)
+    public async Task<Result<IList<T>>> PageAsync(ISpecification<T> specification, int offset, int limit, CancellationToken cancellationToken = default)
+    {
+        (int normalizedOffset, int normalizedLimit) = NormalizePagination(offset, limit);
+
+        var query = ApplySpecification(specification);
+        long countValue = query.Count();
+        IList<T> entities = await query.Skip(normalizedOffset).Take(normalizedLimit).ToListAsync();
+        Result<IList<T>> result = new Result<IList<T>>()
+            .SetData(entities)
+            .SetPagination(new Pagination(normalizedLimit, normalizedOffset, countValue))
+            .SetTraceId(_traceId)
+            .SetReturnType(entities.Count > 0 ? ReturnType.Success : ReturnType.CollectionIsEmpty);
+        return result;
+    }
+
+    public async Task<Result<History>> GetHistoryAsync(string id, CancellationToken cancellationToken = default)
     {
         RedisKey streamKey = $"{EntityName}:{id}:history";
         StreamEntry[]? streamEntries = await _database.StreamRangeAsync(streamKey, "-", "+");
@@ -202,9 +280,15 @@ public class Repository<T> : IRepository<T> where T : class, IEntity<T>, new()
             var histRecord = new HistoryRecord();
             string streamId = streamEntry.Id.ToString();
             histRecord.stream_id = streamId;
-            double ticks = double.Parse(streamId.Split("-")[0]);
-            TimeSpan time = TimeSpan.FromMilliseconds(ticks);
-            histRecord.date = new DateTime(1970, 1, 1) + time;
+            string ticksPart = streamId.Split("-")[0];
+            if (long.TryParse(ticksPart, out long ticks))
+            {
+                histRecord.date = DateTimeOffset.FromUnixTimeMilliseconds(ticks).UtcDateTime;
+            }
+            else
+            {
+                histRecord.date = DateTime.MinValue;
+            }
             histRecord.records = new List<Record>();
             foreach (NameValueEntry entry in streamEntry.Values)
             {
@@ -232,19 +316,4 @@ public class Repository<T> : IRepository<T> where T : class, IEntity<T>, new()
         }
     }
 
-    private async Task IncrementEntityCount()
-    {
-        await _database.StringIncrementAsync(EntityCounterKey);
-    }
-
-    private async Task DecrementEntityCount()
-    {
-        await _database.StringDecrementAsync(EntityCounterKey);
-    }
-
-    private async Task<long> GetEntityCount()
-    {
-        string count = await _database.StringGetAsync(EntityCounterKey);
-        return long.Parse(count);
-    }
 }
