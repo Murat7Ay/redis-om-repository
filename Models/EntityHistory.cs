@@ -1,34 +1,46 @@
-﻿using StackExchange.Redis;
+using System.Text.Json.Serialization;
+using StackExchange.Redis;
 
 namespace CrudApp.Models;
 
 public class History
 {
-    public string id { get; set; } = string.Empty;
-    public string entity_name { get; set; } = string.Empty;
-    public List<HistoryRecord> records { get; set; } = new();
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("entity_name")]
+    public string EntityName { get; set; } = string.Empty;
+
+    [JsonPropertyName("records")]
+    public List<HistoryRecord> Records { get; set; } = new();
 }
 
 public class HistoryRecord
 {
-    public string stream_id { get; set; } = string.Empty;
-    public DateTime date { get; set; }
-    public List<Record> records { get; set; } = new();
-    
-    
+    [JsonPropertyName("stream_id")]
+    public string StreamId { get; set; } = string.Empty;
+
+    [JsonPropertyName("date")]
+    public DateTime Date { get; set; }
+
+    [JsonPropertyName("records")]
+    public List<ChangeRecord> Records { get; set; } = new();
 }
 
-public class Record
+public class ChangeRecord
 {
-    public string prop_name { get; set; } = string.Empty;
-    public string value { get; set; } = string.Empty;
+    [JsonPropertyName("prop_name")]
+    public string PropertyName { get; set; } = string.Empty;
 
-    public static implicit operator Record(NameValueEntry entry)
+    [JsonPropertyName("value")]
+    public string Value { get; set; } = string.Empty;
+
+    public static implicit operator ChangeRecord(NameValueEntry entry)
     {
-        return new Record
+        return new ChangeRecord
         {
-            prop_name = entry.Name.ToString(),
-            value = entry.Value.ToString()
+            PropertyName = entry.Name.ToString(),
+            Value = entry.Value.ToString()
         };
     }
 }

@@ -1,5 +1,7 @@
-﻿using System.Reflection;
+using System.Reflection;
 using CrudApp.Entity;
+using CrudApp.Extensions;
+using CrudApp.Models;
 using CrudApp.Repository;
 using CrudApp.Service;
 using CrudApp.Specification;
@@ -10,12 +12,13 @@ public static class RegisterEntities
 {
     public static void AddRepositories(WebApplicationBuilder builder)
     {
-        builder.Services.AddSingleton(typeof(IRepository<>), typeof(Repository<>));
+        builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
     }
+
     public static void AddApis(WebApplication app)
     {
         app.MapEntityApis();
-        app.UserApis();
+        app.MapUserApis();
     }
 
     private static void MapEntityApis(this WebApplication app)
@@ -34,7 +37,7 @@ public static class RegisterEntities
                 .GetMethod(nameof(MapEntityApiFor), BindingFlags.NonPublic | BindingFlags.Static);
 
             MethodInfo? genericMethod = mapMethod?.MakeGenericMethod(entityType);
-            genericMethod?.Invoke(null, new object[] { app });
+            genericMethod?.Invoke(null, [app]);
         }
     }
 
@@ -43,29 +46,47 @@ public static class RegisterEntities
         string routeBase = "/" + GetRouteName(typeof(T));
         ApiPolicyAttribute? policy = typeof(T).GetCustomAttribute<ApiPolicyAttribute>();
 
-        ApplyPolicy(app.MapPut(routeBase, (IRepository<T> repository, T entity) => repository.AddAsync(entity)), policy);
-        ApplyPolicy(app.MapPost(routeBase, (IRepository<T> repository, T entity) => repository.UpdateAsync(entity)), policy);
-        ApplyPolicy(app.MapDelete(routeBase, (IRepository<T> repository, string id) => repository.DeleteAsync(id)), policy);
-        ApplyPolicy(app.MapGet(routeBase, (IRepository<T> repository) => repository.ListAsync()), policy);
-        ApplyPolicy(app.MapGet($"{routeBase}/{{id}}/history",
-            (IRepository<T> repository, string id) => repository.GetHistoryAsync(id)), policy);
-        ApplyPolicy(app.MapGet($"{routeBase}/{{id}}",
-            (IRepository<T> repository, string id) => repository.FindByIdAsync(id)), policy);
-        ApplyPolicy(app.MapGet($"{routeBase}/{{offset}}/{{limit}}",
-            (IRepository<T> repository, int offset, int limit) => repository.PageAsync(offset, limit)), policy);
+        ApplyPolicy(app.MapPut(routeBase, async (IRepository<T> repository, T entity) =>
+            (await repository.AddAsync(entity)).ToHttpResult()), policy);
+
+        ApplyPolicy(app.MapPost(routeBase, async (IRepository<T> repository, T entity) =>
+            (await repository.UpdateAsync(entity)).ToHttpResult()), policy);
+
+        ApplyPolicy(app.MapDelete(routeBase, async (IRepository<T> repository, string id) =>
+            (await repository.DeleteAsync(id)).ToHttpResult()), policy);
+
+        ApplyPolicy(app.MapDelete($"{routeBase}/purge", async (IRepository<T> repository, string id) =>
+            (await repository.PurgeAsync(id)).ToHttpResult()), policy);
+
+        ApplyPolicy(app.MapPost($"{routeBase}/{{id}}/restore", async (IRepository<T> repository, string id) =>
+            (await repository.RestoreAsync(id)).ToHttpResult()), policy);
+
+        ApplyPolicy(app.MapGet(routeBase, async (IRepository<T> repository) =>
+            (await repository.ListAsync()).ToHttpResult()), policy);
+
+        ApplyPolicy(app.MapGet($"{routeBase}/{{id}}/history", async (IRepository<T> repository, string id) =>
+            (await repository.GetHistoryAsync(id)).ToHttpResult()), policy);
+
+        ApplyPolicy(app.MapGet($"{routeBase}/{{id}}", async (IRepository<T> repository, string id) =>
+            (await repository.FindByIdAsync(id)).ToHttpResult()), policy);
+
+        ApplyPolicy(app.MapGet($"{routeBase}/{{offset}}/{{limit}}", async (IRepository<T> repository, int offset, int limit) =>
+            (await repository.PageAsync(offset, limit)).ToHttpResult()), policy);
+
+        ApplyPolicy(app.MapGet($"{routeBase}/search", async (IRepository<T> repository, string q, int offset = 0, int limit = 20) =>
+        {
+            var spec = new SearchSpecification<T>(q);
+            return (await repository.PageAsync(spec, offset, limit)).ToHttpResult();
+        }), policy);
     }
 
     private static RouteHandlerBuilder ApplyPolicy(RouteHandlerBuilder builder, ApiPolicyAttribute? policy)
     {
         if (policy == null)
-        {
             return builder;
-        }
 
         if (string.IsNullOrWhiteSpace(policy.Policy))
-        {
             return builder.RequireAuthorization();
-        }
 
         return builder.RequireAuthorization(policy.Policy);
     }
@@ -74,36 +95,38 @@ public static class RegisterEntities
     {
         string name = entityType.Name;
         if (name.EndsWith("Entity", StringComparison.OrdinalIgnoreCase))
-        {
             name = name[..^"Entity".Length];
-        }
 
         return name.ToLowerInvariant();
     }
 
-    private static void UserApis(this WebApplication app)
+    private static void MapUserApis(this WebApplication app)
     {
-        app.MapPut("/user", (IRepository<UserEntity> repository, TokenService service, UserEntity entity) =>
+        app.MapPut("/user", async (IRepository<UserEntity> repository, TokenService service, UserEntity entity) =>
         {
             entity.Password = service.GetPasswordHash(entity.Password);
-            return repository.AddAsync(entity);
+            var result = await repository.AddAsync(entity);
+            return result.ToHttpResult();
         });
-        app.MapPost("/login", async (TokenService service, IRepository<UserEntity> userRepository, User userModel) =>
+
+        app.MapPost("/login", async (TokenService service, IRepository<UserEntity> userRepository, UserLoginRequest request) =>
         {
-            var spec = new UserByCredentialsSpec(userModel.Username, service.GetPasswordHash(userModel.Password));
+            var spec = new UserByCredentialsSpec(request.Username, service.GetPasswordHash(request.Password));
             var result = await userRepository.FindOneAsync(spec);
             if (result.Data is null)
             {
-                return new Models.Result<Models.TokenResponse>()
+                return new Result<TokenResponse>()
                     .SetReturnType(Enums.ReturnType.NotFound)
-                    .SetDescription("Invalid username or password");
+                    .SetDescription("Invalid username or password")
+                    .ToHttpResult();
             }
 
             var token = service.GenerateToken(result.Data);
             result.Data.Password = string.Empty;
-            return new Models.Result<Models.TokenResponse>()
+            return new Result<TokenResponse>()
                 .SetReturnType(Enums.ReturnType.Success)
-                .SetData(new Models.TokenResponse(token));
+                .SetData(new TokenResponse(token))
+                .ToHttpResult();
         });
     }
 }

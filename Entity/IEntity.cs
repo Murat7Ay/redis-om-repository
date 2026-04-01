@@ -1,6 +1,12 @@
-﻿namespace CrudApp.Entity;
+using CrudApp.ChangeTracking;
 
-public interface IEntity<in T> : IEntityId where T : class
+namespace CrudApp.Entity;
+
+public interface IEntity<T> : IEntityId where T : class
 {
-    public IList<KeyValuePair<string, string>> GetChanges(T oldOne);
+    IList<KeyValuePair<string, string>> GetChanges(T oldOne)
+    {
+        var tracker = new ReflectionChangeTracker<T>();
+        return tracker.DetectChanges((T)this, oldOne);
+    }
 }

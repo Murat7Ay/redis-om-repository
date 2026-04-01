@@ -1,0 +1,14 @@
+**/.git
+**/bin
+**/obj
+**/.vs
+**/.vscode
+**/node_modules
+**/*.user
+**/*.suo
+**/Thumbs.db
+*.md
+!README.md
+.gitignore
+.dockerignore
+docker-compose.yml

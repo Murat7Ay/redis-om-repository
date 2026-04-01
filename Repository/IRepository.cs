@@ -1,4 +1,5 @@
-﻿using CrudApp.Entity;
+using System.Linq.Expressions;
+using CrudApp.Entity;
 using CrudApp.Models;
 using CrudApp.Specification;
 
@@ -9,6 +10,8 @@ public interface IRepository<T> where T : class, IEntity<T>, new()
     Task<Result<T>> AddAsync(T entity, CancellationToken cancellationToken = default);
     Task<Result<T>> UpdateAsync(T entity, CancellationToken cancellationToken = default);
     Task<Result<T?>> DeleteAsync(string id, CancellationToken cancellationToken = default);
+    Task<Result<T?>> PurgeAsync(string id, CancellationToken cancellationToken = default);
+    Task<Result<T?>> RestoreAsync(string id, CancellationToken cancellationToken = default);
     Task<Result<T?>> FindByIdAsync(string id, CancellationToken cancellationToken = default);
     Task<Result<T?>> FindOneAsync(Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default);
     Task<Result<T?>> FindOneAsync(ISpecification<T> specification, CancellationToken cancellationToken = default);

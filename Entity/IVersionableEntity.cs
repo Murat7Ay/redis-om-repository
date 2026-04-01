@@ -1,6 +1,6 @@
-﻿namespace CrudApp.Entity;
+namespace CrudApp.Entity;
 
-public interface IVersionAbleEntity
+public interface IVersionable
 {
-    public int Version { get; set; }
+    int RowVersion { get; set; }
 }

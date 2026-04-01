@@ -1,0 +1,22 @@
+services:
+  redis:
+    image: redis/redis-stack:latest
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - redis-data:/data
+
+  api:
+    build: .
+    ports:
+      - "5259:8080"
+    environment:
+      - Redis__ConnectionString=redis:6379
+      - ApiSettings__SecretKey=6ceccd7405ef4b00b2630009be568cfa
+      - ApiSettings__PasswordKey=6ceccd7405ef4b00b2630009be568cfa
+    depends_on:
+      - redis
+
+volumes:
+  redis-data:

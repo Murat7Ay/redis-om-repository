@@ -1,4 +1,4 @@
-﻿using System.IdentityModel.Tokens.Jwt;
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -25,31 +25,27 @@ internal class TokenService
 
         var tokenDescriptor = new SecurityTokenDescriptor
         {
-            Subject = new ClaimsIdentity(new Claim[]
-            {
-                new(ClaimTypes.Name, user.Name),
-                new(ClaimTypes.Role, user.Role),
-                new(ClaimTypes.Hash, Guid.NewGuid().ToString())
-            }),
-            Expires = DateTime.UtcNow.AddMinutes(300),
-            SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
+            Subject = new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.Name, user.Name),
+                new Claim(ClaimTypes.Role, user.Role),
+                new Claim(ClaimTypes.Hash, Guid.NewGuid().ToString())
+            ]),
+            Expires = DateTime.UtcNow.AddMinutes(_apiSettings.TokenExpiryMinutes),
+            SigningCredentials = new SigningCredentials(
+                new SymmetricSecurityKey(key),
+                SecurityAlgorithms.HmacSha256Signature)
         };
 
         var token = tokenHandler.CreateToken(tokenDescriptor);
-
         return tokenHandler.WriteToken(token);
     }
 
     internal string GetPasswordHash(string password)
     {
-        ASCIIEncoding encoding = new ASCIIEncoding();
-
-        Byte[] textBytes = encoding.GetBytes(password);
-        Byte[] hashBytes;
-
-        using (HMACSHA256 hash = new HMACSHA256(_apiSettings.GetPasswordBytes()))
-            hashBytes = hash.ComputeHash(textBytes);
-
-        return BitConverter.ToString(hashBytes).Replace("-", "").ToLower();
+        byte[] textBytes = Encoding.UTF8.GetBytes(password);
+        using var hmac = new HMACSHA256(_apiSettings.GetPasswordBytes());
+        byte[] hashBytes = hmac.ComputeHash(textBytes);
+        return Convert.ToHexString(hashBytes).ToLowerInvariant();
     }
 }
