@@ -254,4 +254,4 @@ OpenAPI exposure).
 
 ## License
 
-Provided as-is for educational and experimental purposes.
+[MIT](LICENSE)
