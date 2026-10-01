@@ -1,6 +1,6 @@
 # RedisCrud
 
-[![CI](https://github.com/Murat7Ay/redis-om-repository/actions/workflows/ci.yml/badge.svg)](https://github.com/Murat7Ay/redis-om-repository/actions/workflows/ci.yml)
+[![CI](https://github.com/Murat7Ay/RedisCrud/actions/workflows/ci.yml/badge.svg)](https://github.com/Murat7Ay/RedisCrud/actions/workflows/ci.yml)
 
 Convention-based CRUD endpoints for documents stored in **Redis 8** (JSON + Query Engine + Streams),
 for ASP.NET Core 10 (.NET 10 LTS). Entities are declared with Redis OM attributes; the framework adds audit fields,
