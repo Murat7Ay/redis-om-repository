@@ -1,208 +1,257 @@
-# Redis OM Repository
+# RedisCrud
 
-An EF-inspired generic CRUD API framework built with ASP.NET Core 9 and [Redis OM .NET](https://github.com/redis/redis-om-dotnet). Define an entity class, inherit from `BaseEntity<T>`, and get fully-featured REST endpoints with zero wiring.
+[![CI](https://github.com/Murat7Ay/redis-om-repository/actions/workflows/ci.yml/badge.svg)](https://github.com/Murat7Ay/redis-om-repository/actions/workflows/ci.yml)
 
-## Features
+Convention-based CRUD endpoints for documents stored in **Redis 8** (JSON + Query Engine + Streams),
+for ASP.NET Core 10 (.NET 10 LTS). Entities are declared with Redis OM attributes; the framework adds audit fields,
+soft delete, optimistic concurrency, per-entity change history and full-text search, and maps
+HTTP endpoints with explicit authorization.
 
-- **Auto-generated CRUD endpoints** -- inherit `BaseEntity<T>`, get PUT/POST/GET/DELETE routes automatically
-- **Audit columns** -- `CreatedAt`, `UpdatedAt`, `CreatedBy`, `UpdatedBy` are set automatically
-- **Soft-delete by default** -- `DELETE` marks as deleted; `/purge` permanently removes; `/restore` recovers
-- **Optimistic concurrency** -- `RowVersion` prevents lost updates (409 Conflict on mismatch)
-- **Entity history** -- every update is tracked via Redis Streams with field-level diffs
-- **Reflection-based change tracking** -- automatic diff detection; sensitive fields masked with `[SensitiveProperty]`
-- **Full-text search** -- generic `GET /{entity}/search?q=` across all `[Searchable]` properties
-- **Specification pattern** -- composable query specifications
-- **Pagination** -- built-in offset/limit pagination with total count
-- **JWT authentication** -- bearer token auth with configurable expiry
-- **Role-based authorization** -- `reader`, `moderator`, `root` policies via `[ApiPolicy]` attribute
-- **Health check** -- `/health` endpoint verifying Redis connectivity
-- **Swagger/OpenAPI** -- interactive API docs at `/swagger`
-- **Global exception handling** -- unhandled errors return structured JSON, never raw stack traces
-- **Proper HTTP status codes** -- `Result<T>` maps to 200/400/404/409/500 automatically
-- **xUnit test suite** -- 29 tests covering repository, change tracking, and result mapping
+It is a good fit for **reference data, catalogs, admin back-offices and internal tools** where the
+resource really is "a document with a lifecycle". It is not a domain layer: entities with business
+invariants, cross-entity transactions or fields clients must never set need hand-written endpoints
+(the store is usable on its own for that, see `samples/CrudApp/Auth`).
 
-## Quick Start: Adding a New Entity (5 lines)
+## Quick start
+
+Requires the .NET 10 SDK and Docker.
+
+```bash
+docker run -d --name redis -p 6379:6379 redis:8
+dotnet run --project samples/CrudApp          # Development: http://localhost:5259/swagger
+```
+
+Development configuration ships a dev-only signing key and a bootstrap root user
+(`admin` / `dev-admin-password`, see `samples/CrudApp/appsettings.Development.json`).
+The app refuses to start outside Development with that key, or with no key.
+
+With Docker Compose (Production mode, secrets from the environment):
+
+```bash
+AUTH_SIGNING_KEY="$(openssl rand -base64 48)" BOOTSTRAP_ADMIN_PASSWORD='change-me' docker compose up -d
+```
+
+## Defining an entity
 
 ```csharp
-[ApiPolicy("moderator")]
-[Document(StorageType = StorageType.Json, Prefixes = new[] { "Product" })]
-public class ProductEntity : BaseEntity<ProductEntity>
+[Document(StorageType = StorageType.Json, Prefixes = ["Product"], Language = "turkish")]
+public class ProductEntity : Entity
 {
-    [Indexed(CaseSensitive = false)] public string Name { get; set; } = string.Empty;
-    [Searchable] public string Description { get; set; } = string.Empty;
-    [Indexed] public decimal Price { get; set; }
-    [Indexed] public string Category { get; set; } = string.Empty;
-    [Indexed] public int Stock { get; set; }
-    public List<string> Tags { get; set; } = new();
-    public List<string> Images { get; set; } = new();
+    [Required, StringLength(200, MinimumLength = 1)]
+    [Indexed(CaseSensitive = false)] public string Name { get; set; } = "";
+    [StringLength(4000)]
+    [Searchable] public string Description { get; set; } = "";
+    [Range(0, 1_000_000)]
+    [Indexed(Sortable = true)] public decimal Price { get; set; }
+    public List<string> Tags { get; set; } = [];
 }
 ```
 
-That's it. This generates all of these endpoints automatically:
-
-| Method | Route | Description |
-|--------|-------|-------------|
-| `PUT` | `/product` | Create a new product |
-| `POST` | `/product` | Update an existing product |
-| `DELETE` | `/product?id={id}` | Soft-delete a product |
-| `DELETE` | `/product/purge?id={id}` | Permanently delete a product |
-| `POST` | `/product/{id}/restore` | Restore a soft-deleted product |
-| `GET` | `/product` | List all active products |
-| `GET` | `/product/{id}` | Get a product by ID |
-| `GET` | `/product/{offset}/{limit}` | Paginated list |
-| `GET` | `/product/{id}/history` | Change history |
-| `GET` | `/product/search?q={query}` | Full-text search |
-
-Every entity automatically gets:
-- Audit fields: `CreatedAt`, `UpdatedAt`, `CreatedBy`, `UpdatedBy`
-- Soft-delete fields: `IsDeleted`, `DeletedAt`, `DeletedBy`
-- Optimistic concurrency: `RowVersion`
-
-## What You Get For Free (BaseEntity)
-
 ```csharp
-public abstract class BaseEntity<T> : IEntity<T>, IAuditableEntity, ISoftDeletable, IVersionable
+builder.Services.AddRedisCrud(builder.Configuration.GetSection("Crud"));
+// ...
+app.MapCrud<ProductEntity>("/products", o =>
 {
-    string Id            // Redis key, auto-generated on insert
-    int RowVersion       // Incremented on every update, checked for conflicts
-    DateTime CreatedAt   // Set once on insert
-    DateTime UpdatedAt   // Updated on every modification
-    string CreatedBy     // User from JWT claims (or "system")
-    string UpdatedBy     // User from JWT claims (or "system")
-    bool IsDeleted       // Soft-delete flag, filtered from queries by default
-    DateTime? DeletedAt  // When the entity was soft-deleted
-    string? DeletedBy    // Who soft-deleted it
-}
+    o.ReadPolicy = "reader";      // GET list / by id / search
+    o.WritePolicy = "moderator";  // POST, PUT, DELETE
+    o.AdminPolicy = "root";       // restore, purge, history
+});
 ```
 
-## Getting Started
+Registration is explicit: no assembly scanning, no runtime `MakeGenericMethod`. The index for every
+mapped entity (and every `AddEntity<T>()`) is created at startup; if the attributes changed, the stale
+index is dropped and recreated (documents are kept and re-indexed in the background), or startup fails
+when `Crud:RecreateStaleIndexes` is `false`.
 
-### Prerequisites
+DataAnnotations on the entity are enforced on `POST` and `PUT` (400 `ValidationProblem`). The framework runs this check
+itself (an endpoint filter), so it works for any `T` regardless of the host's validation setup; the sample's
+auth DTOs use .NET 10's built-in `AddValidation()`.
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
-- [Docker](https://www.docker.com/get-started) (for Redis Stack)
+## Endpoints
 
-### Option 1: Docker Compose (recommended)
+| Method | Route | Policy | Success | Notes |
+|---|---|---|---|---|
+| `GET` | `/products?offset=0&limit=20` | read | 200 `Page<T>` | Active entities ordered by `CreatedAt`. `limit` ≤ `MaxPageSize`, `offset+limit` ≤ 10 000. |
+| `GET` | `/products/search?q=...&offset=&limit=` | read | 200 `Page<T>` | Only mapped when the entity has `[Searchable]` properties. Ordered by relevance. |
+| `GET` | `/products/{id}` | read | 200 + `ETag` | 404 for missing and soft-deleted entities. |
+| `POST` | `/products` | write | 201 + `Location` + `ETag` | Server generates the id (UUIDv7). |
+| `PUT` | `/products/{id}` | write | 200 + `ETag` | Full replacement. Requires `If-Match` **or** `rowVersion` in the body (else 428). |
+| `DELETE` | `/products/{id}` | write | 204 | Soft delete (or purge when `Crud:SoftDelete=false`). Optional `If-Match`. |
+| `POST` | `/products/{id}/restore` | admin | 200 | |
+| `POST` | `/products/{id}/purge` | admin | 204 | Removes the document **and its history**. Irreversible. |
+| `GET` | `/products/{id}/history?count=50` | admin | 200 | Newest first. Works for soft-deleted entities. |
 
-```bash
-docker compose up -d
+Errors are RFC 9457 `application/problem+json`.
+
+| Status | When |
+|---|---|
+| 400 | Validation failure, malformed JSON, invalid paging |
+| 401 / 403 | Missing/invalid token / policy not satisfied |
+| 404 | Unknown id, soft-deleted (except history/restore/purge) |
+| 409 | `rowVersion` in the body is stale (response has `currentVersion`); update/delete of a deleted entity; restore of a live one |
+| 412 | `If-Match` does not match the current version |
+| 428 | `PUT` without any precondition |
+
+There is no `PATCH` yet; `PUT` replaces every client-owned field, so send the whole document you got from `GET`.
+
+## What the framework owns
+
+`Entity` declares the server-owned fields. Client values for them are **ignored** on create and replace:
+
+| Field | Meaning |
+|---|---|
+| `Id` | UUIDv7 (32 hex chars), generated on create |
+| `RowVersion` | Starts at 1, +1 on every write (update, delete, restore). Exposed as a strong `ETag`. |
+| `CreatedAt` / `CreatedBy` | Set once. `CreatedBy` is the token's `sub` claim (stable user id), not the display name. |
+| `UpdatedAt` / `UpdatedBy` | Every write |
+| `IsDeleted` / `DeletedAt` / `DeletedBy` | Only changed by DELETE / restore |
+
+All other public properties are client-writable. That is the contract of a generic CRUD endpoint;
+if an entity has a field clients must not control, do not expose it through `MapCrud`.
+
+`[SensitiveProperty]` makes a property **write-only over HTTP** (never serialized in responses),
+**masked** (`***`) in history, and **kept** on `PUT` when the client sends `null`.
+
+## Concurrency
+
+Every write is one Lua script on the server: it compares the stored `RowVersion` with the expected
+one, writes the document (`JSON.SET`) and appends the history event (`XADD`) atomically. Concurrent
+writers with the same version produce exactly one success; the others get 412/409. A write that does
+not change any client-owned field is a no-op (no version bump, no history entry).
+
+This holds as long as **all writes go through `RedisEntityStore<T>`**. `store.Query()` exposes Redis OM
+LINQ for application-specific reads; do not use Redis OM's `Insert`/`Update` on these keys.
+
+## History
+
+Key: `history:{Prefix}:{id}` (a Redis Stream, outside the index prefix). One entry per write:
+
+```json
+{ "eventId": "1790869343119-0", "at": "...", "operation": "Update", "version": 2, "actor": "<sub>",
+  "changes": [ { "path": "Name", "old": "Kalem", "new": "Silgi" },
+               { "path": "Address.City", "old": "Ankara", "new": "İzmir" },
+               { "path": "Tags", "old": ["a"], "new": ["a","b"] } ] }
 ```
 
-Starts both Redis Stack and the API. API at `http://localhost:5259`, Redis Insight at `http://localhost:8001`.
+- Diffs are computed on the stored JSON: nested objects get dotted paths, arrays are recorded as whole
+  values, dictionary entries per key, `null` is distinct from `""`, numbers compare by value (`10.5 == 10.50`),
+  output is culture-invariant.
+- `Create` events contain every client field, so history can be replayed forward **while the create
+  event is still retained**. Retention is `Crud:HistoryMaxLength` events per entity (exact trim, default 100;
+  0 disables history).
+- Purge deletes the history stream (right-to-erasure friendly); the purge itself is logged by the application.
+- Streams are per entity: ordering is total within one entity, there is no global ordering across entities.
+- This is an **operational change log, not a tamper-evident audit trail**: anyone with Redis write access can
+  alter it, retention trims it, and Redis replication is asynchronous. Ship it to an append-only store if you
+  need compliance-grade audit.
 
-### Option 2: Manual Setup
+## Search
 
-```bash
-docker run -d --name redis-stack -p 6379:6379 -p 8001:8001 redis/redis-stack:latest
-dotnet run
-```
+`GET /search?q=` splits `q` into letter/digit terms (query syntax cannot be injected; at most 8 terms),
+requires **every** term to match at least one `[Searchable]` field, and prefix-matches terms of 2+
+characters. Results are ranked by the Query Engine's default scorer.
 
-Open `http://localhost:5259/swagger` for the interactive docs.
+- Turkish: prefix matching finds suffixed forms (`kalem` → `kalemler`). Each term is also tried in its
+  Turkish-cased forms, so `KIRMIZI` finds `kırmızı` and `istanbul`/`ISTANBUL` find `İstanbul`.
+  Not supported: ASCII-folded input (`ilik` does not find `ılık`) — that needs a folded copy of the text in the index.
+- `[Document(Language = "turkish")]` selects the Turkish stemmer for the index.
+- No fuzzy matching. Prefix expansion is bounded by the server's `MAXEXPANSIONS`; very short prefixes on
+  large corpora can return incomplete results.
+- Paging is `LIMIT offset count`: cost grows with offset and the server caps `offset+limit` at
+  `MAXSEARCHRESULTS` (10 000 by default), which the API enforces. Narrow the query instead of paging deeper.
+
+## Redis requirements and operational notes
+
+- Redis 8 (Open Source includes JSON and the Query Engine). Tested on Redis 8.x; Redis Stack 7.2+ ships the
+  same modules but is not covered by the test suite.
+- **Single shard / no Redis Cluster.** The write script touches the document key and its history key,
+  which hash to different slots.
+- Enable AOF (`appendonly yes`) if history matters; the compose file does. Replication is asynchronous:
+  a failover can lose acknowledged writes, including history.
+- The connection is lazy with `AbortOnConnectFail=false`; `/health` reports Redis status.
 
 ## Configuration
 
-```json
-{
-  "Redis": {
-    "ConnectionString": "localhost:6379"
-  },
-  "ApiSettings": {
-    "SecretKey": "your-secret-key-here",
-    "PasswordKey": "your-password-key-here",
-    "TokenExpiryMinutes": 300,
-    "MaxEntityCount": 1000,
-    "HistoryMaxLength": 10,
-    "SoftDeleteEnabled": true
-  }
-}
+`Crud` section (framework):
+
+| Key | Default | |
+|---|---|---|
+| `ConnectionString` | `localhost:6379` | StackExchange.Redis connection string |
+| `HistoryMaxLength` | `100` | Events per entity; 0 disables history |
+| `SoftDelete` | `true` | `false` makes DELETE purge |
+| `DefaultPageSize` / `MaxPageSize` | `20` / `100` | |
+| `RecreateStaleIndexes` | `true` | `false`: fail startup on index drift |
+
+`Auth` section (sample application):
+
+| Key | Default | |
+|---|---|---|
+| `SigningKey` | — | Required, ≥ 32 bytes. Use user-secrets or `Auth__SigningKey`. |
+| `Issuer` / `Audience` | `crudapp` | Validated |
+| `TokenLifetimeMinutes` | `60` | 1–1440 |
+| `AuthRequestsPerMinute` | `10` | Per client IP, `/auth/*` |
+| `BootstrapAdmin:Name` / `:Password` | — | Creates a root user at startup if missing |
+
+## Authentication (sample application)
+
+Authentication is an application concern; the sample shows one way to do it:
+
+- `POST /auth/register` `{name, password}` → always role `reader`. Names are unique case-insensitively
+  (reserved atomically with `SET NX`).
+- `POST /auth/login` `{name, password}` → `{accessToken, tokenType, expiresAt}`. Passwords are hashed with
+  ASP.NET Core Identity's PBKDF2 hasher; unknown users and wrong passwords both run one hash verification
+  and return the same 401.
+- `PUT /users/{id}/role` `{role}` and `GET /users` → root only.
+- Roles are hierarchical: `root` ⊇ `moderator` ⊇ `reader`.
+- Tokens are not revocable before expiry; a role change applies at the next login.
+
+## Project layout
+
+```
+src/RedisCrud/                 framework
+  Entity.cs                    base type + [SensitiveProperty]
+  EntityMetadata.cs            per-type facts (keys, index name, searchable/sensitive fields), reflected once
+  Persistence/                 RedisEntityStore<T> (Lua writes, FT.SEARCH reads), SearchQuery, StorageJson
+  History/                     JsonDiff, HistoryEvent
+  Endpoints/                   MapCrud<T>, sensitive-property response filter
+  Hosting/                     AddRedisCrud, options, actor, index provisioning
+samples/CrudApp/               host: entities, JWT auth, users, OpenAPI (Development only)
+tests/RedisCrud.Tests/         unit + integration (real Redis via Testcontainers) + API tests
 ```
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `SecretKey` | HMAC key for signing JWT tokens | *(required)* |
-| `PasswordKey` | HMAC key for hashing passwords | *(required)* |
-| `TokenExpiryMinutes` | JWT token lifetime in minutes | `300` |
-| `MaxEntityCount` | Max entities returned before requiring pagination | `1000` |
-| `HistoryMaxLength` | Max stream entries per entity history | `10` |
-| `SoftDeleteEnabled` | Global soft-delete toggle | `true` |
-
-## Authentication
-
-### Register a User
-
-```http
-PUT /user
-Content-Type: application/json
-
-{
-  "name": "admin",
-  "password": "secret",
-  "role": "root"
-}
-```
-
-### Login
-
-```http
-POST /login
-Content-Type: application/json
-
-{
-  "username": "admin",
-  "password": "secret"
-}
-```
-
-Use the returned JWT token in `Authorization: Bearer <token>` header.
-
-## Running Tests
+## Tests
 
 ```bash
-cd CrudApp.Tests
 dotnet test
 ```
 
-## Architecture
+Requires Docker: the fixture starts `redis:8` with Testcontainers. To use an existing, disposable server
+instead, set `REDIS_TEST_CONNECTION=host:port` (tests drop and recreate their indexes).
 
-```
-Program.cs                          -- Composition root
-Extensions/
-  ServiceCollectionExtensions.cs    -- Redis, JWT, Swagger DI setup
-  ResultExtensions.cs               -- Result<T> -> HTTP status code mapping
-Middleware/
-  GlobalExceptionMiddleware.cs      -- Catches unhandled exceptions
-Entity/
-  IEntityId.cs                      -- Base interface with Redis Id
-  IEntity<T>.cs                     -- Entity contract with default change tracking
-  IAuditableEntity.cs               -- CreatedAt/UpdatedAt/CreatedBy/UpdatedBy
-  ISoftDeletable.cs                 -- IsDeleted/DeletedAt/DeletedBy
-  IVersionable.cs                   -- RowVersion for optimistic concurrency
-  BaseEntity<T>.cs                  -- Abstract base implementing all interfaces
-  ApiPolicyAttribute.cs             -- Declarative authorization per entity
-ChangeTracking/
-  IChangeTracker.cs                 -- Change detection contract
-  ReflectionChangeTracker.cs        -- Automatic property-level diff
-  SensitivePropertyAttribute.cs     -- Masks sensitive fields in history
-Repository/
-  IRepository<T>.cs                 -- Generic repository interface
-  Repository<T>.cs                  -- Redis OM implementation with audit + soft-delete
-Specification/
-  ISpecification<T>.cs              -- Query specification contract
-  Specification<T>.cs               -- Base class with expression criteria
-  SearchSpecification<T>.cs         -- Generic full-text search across [Searchable] props
-Service/
-  TokenService.cs                   -- JWT generation and password hashing
-Settings/
-  ApiSettings.cs                    -- Strongly-typed configuration
-Models/
-  Result.cs                         -- Unified API response envelope
-  Pagination.cs                     -- Offset/limit/count metadata
-  EntityHistory.cs                  -- Stream-based change history DTOs
-  TokenResponse.cs                  -- JWT token wrapper
-  UserLoginRequest.cs               -- Login request DTO
-CrudApp.Tests/                      -- xUnit test project (29 tests)
-```
+103 tests: JSON diff semantics, search query construction, metadata; store behaviour against real Redis
+(compare-and-set under 25 concurrent writers, lifecycle, history content and trimming, paging stability,
+search ranking/injection/Turkish casing, index drift); and HTTP behaviour (authorization matrix, role
+hierarchy, forged tokens, over-posting, ETag/If-Match, validation, rate limiting, startup key checks,
+OpenAPI exposure).
+
+## Breaking changes from the previous version
+
+| Before | Now |
+|---|---|
+| `PUT /product` create, `POST /product` update | `POST /products` create, `PUT /products/{id}` replace |
+| `DELETE /product?id=`, `DELETE /product/purge?id=` | `DELETE /products/{id}`, `POST /products/{id}/purge` |
+| `GET /product/{offset}/{limit}`, unpaged `GET /product` | `GET /products?offset=&limit=` (always paged) |
+| `Result<T>` envelope with `ReturnType` | Resource / `Page<T>` bodies, ProblemDetails errors |
+| `BaseEntity<T>` + 4 interfaces | `Entity` |
+| `[ApiPolicy]` on the entity, one policy for everything, anonymous if absent | `MapCrud` options per operation class, authenticated by default |
+| Assembly scanning | Explicit `MapCrud<T>` / `AddEntity<T>` |
+| `Specification<T>`, `IRepository<T>` | `RedisEntityStore<T>` + `Query()` for LINQ reads |
+| History: old values only, unreadable through the API | Old and new values, operation, version, actor |
+| `PUT /user` (anonymous, any role), `POST /login` | `/auth/register` (reader only), `/auth/login`, root-only role management |
+| HMAC-SHA256 password "hash" | PBKDF2 (ASP.NET Core Identity) — existing users must reset passwords |
+| `ApiSettings` section | `Crud` and `Auth` sections |
+| Redis Stack | Redis 8 |
 
 ## License
 
-This project is provided as-is for educational and experimental purposes.
+Provided as-is for educational and experimental purposes.

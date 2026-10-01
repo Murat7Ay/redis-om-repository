@@ -12,3 +12,4 @@
 .gitignore
 .dockerignore
 docker-compose.yml
+tests/
