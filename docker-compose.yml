@@ -1,20 +1,27 @@
+# Local development stack. Secrets are read from the environment / a .env file, never committed:
+#   AUTH_SIGNING_KEY=<at least 32 random bytes>  BOOTSTRAP_ADMIN_PASSWORD=<password>  docker compose up -d
 services:
   redis:
-    image: redis/redis-stack:latest
+    image: redis:8
+    # AOF with fsync every second: history and audit data survive a restart (at most ~1s of writes lost on crash).
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:
-      - "6379:6379"
-      - "8001:8001"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
 
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: samples/CrudApp/Dockerfile
     ports:
-      - "5259:8080"
+      - "127.0.0.1:5259:8080"
     environment:
-      - Redis__ConnectionString=redis:6379
-      - ApiSettings__SecretKey=6ceccd7405ef4b00b2630009be568cfa
-      - ApiSettings__PasswordKey=6ceccd7405ef4b00b2630009be568cfa
+      - ASPNETCORE_ENVIRONMENT=Production
+      - Crud__ConnectionString=redis:6379
+      - Auth__SigningKey=${AUTH_SIGNING_KEY:?set AUTH_SIGNING_KEY}
+      - Auth__BootstrapAdmin__Name=admin
+      - Auth__BootstrapAdmin__Password=${BOOTSTRAP_ADMIN_PASSWORD:?set BOOTSTRAP_ADMIN_PASSWORD}
     depends_on:
       - redis
 

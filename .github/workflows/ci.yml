@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # Integration and API tests start redis:8 through Testcontainers (Docker is available on ubuntu runners).
+      - name: Test
+        run: dotnet test RedisCrud.sln -c Release --logger "console;verbosity=normal"
+
+      - name: Build container image
+        run: docker build -f samples/CrudApp/Dockerfile -t crudapp:ci .
