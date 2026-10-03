@@ -8,7 +8,7 @@ namespace RedisCrud.Persistence;
 /// User text is never passed through: it is split into letter/digit tokens, so query syntax
 /// (<c>| - @ { } ( ) *</c> ...) cannot be injected.
 /// </summary>
-public static class SearchQuery
+internal static class SearchQuery
 {
     public const string ActiveFilter = "@IsDeleted:{false}";
     public const int MaxTerms = 8;

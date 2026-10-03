@@ -53,20 +53,28 @@ public static class ServiceCollectionExtensions
     }
 }
 
-public sealed class CrudBuilder(IServiceCollection services, EntityRegistry registry)
+public sealed class CrudBuilder
 {
-    public IServiceCollection Services { get; } = services;
+    private readonly EntityRegistry _registry;
+
+    internal CrudBuilder(IServiceCollection services, EntityRegistry registry)
+    {
+        Services = services;
+        _registry = registry;
+    }
+
+    public IServiceCollection Services { get; }
 
     /// <summary>Provision the index for an entity that is used through the store but not mapped to endpoints.</summary>
     public CrudBuilder AddEntity<T>() where T : Entity, new()
     {
-        registry.Add<T>();
+        _registry.Add<T>();
         return this;
     }
 }
 
 /// <summary>Entity types whose indexes are provisioned at startup.</summary>
-public sealed class EntityRegistry
+internal sealed class EntityRegistry
 {
     private readonly HashSet<Type> _types = [];
 

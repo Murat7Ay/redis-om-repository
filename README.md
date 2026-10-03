@@ -1,6 +1,8 @@
 # RedisCrud
 
 [![CI](https://github.com/Murat7Ay/RedisCrud/actions/workflows/ci.yml/badge.svg)](https://github.com/Murat7Ay/RedisCrud/actions/workflows/ci.yml)
+[![NuGet](https://img.shields.io/nuget/vpre/RedisCrud?label=nuget)](https://www.nuget.org/packages/RedisCrud)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Convention-based CRUD endpoints for documents stored in **Redis 8** (JSON + Query Engine + Streams),
 for ASP.NET Core 10 (.NET 10 LTS). Entities are declared with Redis OM attributes; the framework adds audit fields,
@@ -12,7 +14,15 @@ resource really is "a document with a lifecycle". It is not a domain layer: enti
 invariants, cross-entity transactions or fields clients must never set need hand-written endpoints
 (the store is usable on its own for that, see `samples/CrudApp/Auth`).
 
-## Quick start
+## Install
+
+```bash
+dotnet add package RedisCrud --prerelease
+```
+
+The package is in **preview**: the public API may change between preview releases.
+
+## Quick start (sample application)
 
 Requires the .NET 10 SDK and Docker.
 
@@ -168,7 +178,8 @@ characters. Results are ranked by the Query Engine's default scorer.
   which hash to different slots.
 - Enable AOF (`appendonly yes`) if history matters; the compose file does. Replication is asynchronous:
   a failover can lose acknowledged writes, including history.
-- The connection is lazy with `AbortOnConnectFail=false`; `/health` reports Redis status.
+- Startup fails if Redis is unreachable (indexes are provisioned before requests are accepted). After that
+  the connection reconnects automatically (`AbortOnConnectFail=false`) and `/health` reports Redis status.
 
 ## Configuration
 
@@ -208,7 +219,7 @@ Authentication is an application concern; the sample shows one way to do it:
 ## Project layout
 
 ```
-src/RedisCrud/                 framework
+src/RedisCrud/                 framework (the NuGet package; its own README.md is the package page)
   Entity.cs                    base type + [SensitiveProperty]
   EntityMetadata.cs            per-type facts (keys, index name, searchable/sensitive fields), reflected once
   Persistence/                 RedisEntityStore<T> (Lua writes, FT.SEARCH reads), SearchQuery, StorageJson
@@ -251,6 +262,16 @@ OpenAPI exposure).
 | HMAC-SHA256 password "hash" | PBKDF2 (ASP.NET Core Identity) — existing users must reset passwords |
 | `ApiSettings` section | `Crud` and `Auth` sections |
 | Redis Stack | Redis 8 |
+
+## Releasing
+
+Versions come from git tags ([MinVer](https://github.com/adamralph/minver)). Pushing a tag runs the tests,
+packs, publishes to nuget.org with trusted publishing (OIDC, no stored API key) and creates a GitHub release:
+
+```bash
+git tag v0.1.0-preview.1
+git push origin v0.1.0-preview.1
+```
 
 ## License
 

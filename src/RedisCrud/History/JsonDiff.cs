@@ -10,7 +10,7 @@ namespace RedisCrud.History;
 /// Working on the serialized form makes the diff culture-invariant and gives
 /// nested objects, collections, dictionaries and null transitions a well-defined representation.
 /// </summary>
-public static class JsonDiff
+internal static class JsonDiff
 {
     public const string Mask = "***";
 

@@ -7,7 +7,10 @@ public sealed class CrudOptions
 {
     public const string SectionName = "Crud";
 
-    /// <summary>Redis connection string. The connection is established lazily and retried; startup does not fail when Redis is down.</summary>
+    /// <summary>
+    /// Redis connection string. Startup fails if Redis is unreachable while indexes are provisioned;
+    /// after that the connection reconnects automatically (<c>AbortOnConnectFail=false</c>).
+    /// </summary>
     public string ConnectionString { get; set; } = "localhost:6379";
 
     /// <summary>History events kept per entity (exact trim). 0 disables history.</summary>
@@ -37,7 +40,7 @@ public interface ICrudActor
 /// Uses the stable subject identifier (<c>sub</c> / NameIdentifier), not the display name:
 /// names are not guaranteed unique, ids are.
 /// </summary>
-public sealed class HttpContextCrudActor(IHttpContextAccessor accessor) : ICrudActor
+internal sealed class HttpContextCrudActor(IHttpContextAccessor accessor) : ICrudActor
 {
     public string Id
     {
