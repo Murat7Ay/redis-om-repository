@@ -8,13 +8,44 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
+  <!-- Package -->
+  <PropertyGroup>
+    <PackageId>RedisCrud</PackageId>
+    <Authors>Murat Ay</Authors>
+    <Description>Atomic, audited CRUD endpoints over Redis 8 (JSON + Query Engine + Streams) for ASP.NET Core minimal APIs: optimistic concurrency via Lua compare-and-set, soft delete, field-level change history, safe full-text search and per-operation authorization.</Description>
+    <PackageTags>redis;redis-om;redisjson;redisearch;aspnetcore;minimal-api;crud;optimistic-concurrency;audit</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Murat7Ay/RedisCrud</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Copyright>Copyright (c) 2022-2026 Murat Ay</Copyright>
+
+    <!-- Version comes from git tags (v0.1.0-preview.1 → 0.1.0-preview.1). -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <MinVerDefaultPreReleaseIdentifiers>preview.0</MinVerDefaultPreReleaseIdentifiers>
+
+    <!-- SourceLink (built into the .NET SDK for GitHub) and symbols. -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="MinVer" Version="8.0.0" PrivateAssets="all" />
     <PackageReference Include="Redis.OM" Version="1.3.0" />
     <PackageReference Include="StackExchange.Redis" Version="2.13.17" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>

@@ -7,7 +7,7 @@ namespace RedisCrud;
 /// Everything the framework needs to know about an entity type, computed once per type.
 /// This is the only place that reflects over entity attributes.
 /// </summary>
-public sealed class EntityMetadata<T> where T : Entity
+internal sealed class EntityMetadata<T> where T : Entity
 {
     public static EntityMetadata<T> Instance { get; } = new();
 

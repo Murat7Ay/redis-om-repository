@@ -81,7 +81,7 @@ public sealed class RedisEntityStore<T> where T : Entity, new()
     private static JsonSerializerOptions Json => StorageJson.Options;
 
     /// <summary>Ids are server-generated (UUIDv7, 32 hex chars); anything else cannot exist and is rejected without a round trip.</summary>
-    public static bool IsValidId(string? id) =>
+    internal static bool IsValidId(string? id) =>
         !string.IsNullOrEmpty(id) && id.Length <= 64 && id.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
 
     // ---------------------------------------------------------------- reads

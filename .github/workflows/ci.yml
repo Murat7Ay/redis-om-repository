@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # MinVer derives the package version from tags
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -18,6 +20,9 @@ jobs:
       # Integration and API tests start redis:8 through Testcontainers (Docker is available on ubuntu runners).
       - name: Test
         run: dotnet test RedisCrud.sln -c Release --logger "console;verbosity=normal"
+
+      - name: Pack
+        run: dotnet pack src/RedisCrud -c Release --no-build -o artifacts
 
       - name: Build container image
         run: docker build -f samples/CrudApp/Dockerfile -t crudapp:ci .

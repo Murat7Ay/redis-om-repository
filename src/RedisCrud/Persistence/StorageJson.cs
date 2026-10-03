@@ -13,7 +13,7 @@ namespace RedisCrud.Persistence;
 /// in the host's local time zone, which shifts stored values per server and throws for
 /// <see cref="DateTime.MinValue"/> on UTC+ hosts.
 /// </summary>
-public static class StorageJson
+internal static class StorageJson
 {
     public static JsonSerializerOptions Options { get; } = Create();
 

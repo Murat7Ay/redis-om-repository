@@ -15,10 +15,10 @@ public enum WriteStatus
 public sealed record WriteResult<T>(WriteStatus Status, T? Entity = null, int? CurrentVersion = null, string? Detail = null)
     where T : class
 {
-    public static WriteResult<T> Success(T entity) => new(WriteStatus.Ok, entity);
-    public static WriteResult<T> Missing() => new(WriteStatus.NotFound);
-    public static WriteResult<T> Conflict(int currentVersion) => new(WriteStatus.VersionConflict, CurrentVersion: currentVersion);
-    public static WriteResult<T> Invalid(string detail) => new(WriteStatus.InvalidState, Detail: detail);
+    internal static WriteResult<T> Success(T entity) => new(WriteStatus.Ok, entity);
+    internal static WriteResult<T> Missing() => new(WriteStatus.NotFound);
+    internal static WriteResult<T> Conflict(int currentVersion) => new(WriteStatus.VersionConflict, CurrentVersion: currentVersion);
+    internal static WriteResult<T> Invalid(string detail) => new(WriteStatus.InvalidState, Detail: detail);
 }
 
 /// <param name="Items">The page.</param>
